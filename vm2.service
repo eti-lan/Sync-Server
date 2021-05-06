@@ -1,0 +1,187 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          eti SyncNode 2
+# Required-Start:    $remote_fs $syslog $named $network $time
+# Required-Stop:     $remote_fs $syslog $named $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: eti SyncNode 2 Service
+# Description:       Synchronize folders via BTSync/Resilio Sync
+### END INIT INFO
+
+RUNAS=root
+
+start() {
+	echo ""
+	. /root/eti-config.conf
+	alias eti='/etc/init.d/eti'
+	echo 'eti Sync VM 2' >&2
+	echo "Starting Resilio Sync..."
+	service resilio-sync start
+	sleep 5
+	echo "\n"
+	curl -u $user:$pass "$eti_call&dir=$sync_dir/eti_launcher&$syncoptions"
+	sqlite3 /root/game.db \ 'select game_key,game_title,game_id from games order by db_id' > /root/game.db.txt
+	sqlite3 /root/game.db \ 'select tool_key,tool_name,tool_id from tools order by db_id' >> /root/game.db.txt
+	echo "\n"
+	while IFS='|' read -r col1 col2 col3; do echo "Updating "$col1" ("$col2") ..." | tr -ds '[:]' ''; curl -u $user:$pass "$sync_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; curl --silent --output /dev/null -u $user:$pass "$prefs_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; sleep 1; echo "\n"; done < /root/game.db.txt
+	rm /root/game.db.txt
+	cp /lan/eti_launcher/update/game.db /root/game.db
+
+	if [ -f $sync_dir/$syncvm_key/vm2.service ]
+	then
+	  echo "Updating Sync VM Service..."
+	  cp $sync_dir/$syncvm_key/vm2.service /etc/init.d/eti
+ 	  echo "Updating Sync VM Info..."
+	  cp $sync_dir/$syncvm_key/vm2.info /etc/rc.local
+ 	fi
+	echo 'Service started.' >&2
+}
+
+stop() {
+	echo ""
+	. /root/eti-config.conf
+    echo 'eti Sync VM 2' >&2
+    echo "Stopping Resilio Sync..."
+	curl --silent --output /dev/null -u $user:$pass "$exit_call"
+	sleep 2
+	service resilio-sync stop
+	echo ""
+	echo 'Service stopped' >&2
+}
+
+cleanup() {
+	echo -n "Should all synchronized data be removed? [yes|no] "
+	local SURE
+	read SURE
+	if [ "$SURE" = "yes" ]; then
+	  stop
+	  rm -rf /lan/*
+	fi
+}
+
+update_keys() {
+	. /root/eti-config.conf
+	echo "\n"
+    cp /lan/eti_launcher/update/game.db /root/game.db
+	rm /root/game.db.txt
+	rm /root/game.db.del.txt
+	sqlite3 /root/game.db \ 'select game_key,game_title,game_id from games order by db_id' > /root/game.db.txt
+	sqlite3 /root/game.db \ 'select game_key,game_id from discarded order by del_id' > /root/game.db.del.txt
+	while IFS='|' read -r col1 col2 col3; do echo "Updating "$col1" ("$col2") ..." | tr -ds '[:]' ''; curl -u $user:$pass "$sync_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; curl --silent --output /dev/null -u $user:$pass "$prefs_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; sleep 1; echo "\n"; done < /root/game.db.txt
+	while IFS='|' read -r col1 col2; do echo "Removing "$col1" ("$col2") ..." | tr -ds '[:]' ''; curl -u $user:$pass "$remove_call&dir=$sync_dir/$col2&secret=$col1&force=1"; sleep 1; rm -rf $sync_dir/$col2 echo "\n"; done < /root/game.db.del.txt
+
+	if [ -f $sync_dir/$syncvm_key/vm2.service ]
+	  then
+	  echo "Updating Sync VM Service..."
+	  cp $sync_dir/$syncvm_key/vm2.service /etc/init.d/eti
+	  echo "Updating Sync VM Info..."
+	  cp $sync_dir/$syncvm_key/vm2.info /etc/rc.local
+	fi
+}
+
+lan_mode() {
+	iptables -t nat -F
+	iptables -t mangle -F
+	iptables -F
+	iptables -X
+	ip6tables -t nat -F
+	ip6tables -t mangle -F
+	ip6tables -F
+	ip6tables -X
+	# Allow Localhost
+	iptables -A INPUT -i lo -j ACCEPT
+	iptables -A OUTPUT -o lo -j ACCEPT
+	ip6tables -A INPUT -i lo -j ACCEPT
+	ip6tables -A OUTPUT -o lo -j ACCEPT
+	# Allow DHCP
+	iptables -A OUTPUT -d 255.255.255.255 -j ACCEPT
+	iptables -A INPUT -s 255.255.255.255 -j ACCEPT
+	# Allow private networks
+	iptables -A INPUT -s 192.168.0.0/16 -d 192.168.0.0/16 -j ACCEPT
+	iptables -A OUTPUT -s 192.168.0.0/16 -d 192.168.0.0/16 -j ACCEPT
+	iptables -A INPUT -s 10.0.0.0/8 -d 10.0.0.0/8 -j ACCEPT
+	iptables -A OUTPUT -s 10.0.0.0/8 -d 10.0.0.0/8 -j ACCEPT
+	iptables -A INPUT -s 172.16.0.0/12 -d 172.16.0.0/12 -j ACCEPT
+	iptables -A OUTPUT -s 176.16.0.0/12 -d 172.16.0.0/12 -j ACCEPT
+	iptables -A INPUT -s 169.254.0.0/16 -d 169.254.0.0/16 -j ACCEPT
+	iptables -A OUTPUT -s 169.254.0.0/16 -d 169.254.0.0/16 -j ACCEPT
+	# Sync multicast/broadcast
+	iptables -A INPUT -s 239.192.0.0 -j ACCEPT
+    iptables -A OUTPUT -d 239.192.0.0 -j ACCEPT
+	iptables -A INPUT -s 192.168.1.255 -j ACCEPT
+	iptables -A OUTPUT -d 192.168.1.255 -j ACCEPT
+	iptables -A INPUT -m pkttype --pkt-type multicast -j ACCEPT
+	iptables -A INPUT -m pkttype --pkt-type broadcast -j ACCEPT
+    iptables -A OUTPUT -m pkttype --pkt-type multicast -j ACCEPT
+    iptables -A OUTPUT -m pkttype --pkt-type broadcast -j ACCEPT
+	# Allow incoming ping
+	iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+	# Allow established sessions to receive traffic
+	iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+	# Allow VPN
+	iptables -A INPUT -i tun+ -j ACCEPT
+	iptables -A FORWARD -i tun+ -j ACCEPT
+	iptables -A OUTPUT -o tun+ -j ACCEPT
+    # Block All
+    iptables -A OUTPUT -j DROP
+    iptables -A INPUT -j DROP
+    iptables -A FORWARD -j DROP
+    ip6tables -A OUTPUT -j DROP
+    ip6tables -A INPUT -j DROP
+    ip6tables -A FORWARD -j DROP
+
+    . /root/eti-config.conf	
+
+	iptables-save > /etc/iptables/rules.v4
+	ip6tables-save > /etc/iptables/rules.v6
+	echo "LAN mode activated"
+}
+
+inet_mode() {
+	iptables -P INPUT ACCEPT
+	iptables -P FORWARD ACCEPT
+	iptables -P OUTPUT ACCEPT
+	iptables -t nat -F
+	iptables -t mangle -F
+	iptables -F
+	iptables -X
+	ip6tables -P INPUT ACCEPT
+	ip6tables -P FORWARD ACCEPT
+	ip6tables -P OUTPUT ACCEPT
+	ip6tables -t nat -F
+	ip6tables -t mangle -F
+	ip6tables -F
+	ip6tables -X
+
+	iptables-save > /etc/iptables/rules.v4
+	ip6tables-save > /etc/iptables/rules.v6
+    echo "LAN mode disabled"
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  cleanup)
+    cleanup
+    ;;
+  update_keys)
+    update_keys
+    ;;
+  lan_mode)
+    lan_mode
+    ;;
+  inet_mode)
+    inet_mode
+    ;;
+  restart)
+    stop
+    start
+    ;;
+  *)
+    echo "Usage: eti {start|stop|restart|cleanup|update_keys|lan_mode|inet_mode}"
+esac
