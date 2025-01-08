@@ -1,0 +1,274 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          eti Sync Server
+# Required-Start:    $remote_fs $syslog $named $network $time
+# Required-Stop:     $remote_fs $syslog $named $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: eti Sync Server Service
+# Description:       Synchronize folders via BTSync/Resilio Sync
+### END INIT INFO
+
+RUNAS=root
+
+# ANSI color codes
+C="\033[38;5;214m"     # Orange
+BOLD="\033[1m"         # Bold
+NC="\033[0m"           # Reset colors and formatting
+STEP_DESCRIPTION=""
+CURRENT_STEP=0
+
+# Function: Display the progress bar and step description as one unit
+display_progress_unit() {
+    clear
+    printf "\n\n"
+    echo "${C}Step ${CURRENT_STEP}/${TOTAL_STEPS}: ${STEP_DESCRIPTION}${NC}"
+    local terminal_width=$(tput cols)
+    local bar_width=$((terminal_width - 10))
+    local percentage=$((CURRENT_STEP * 100 / TOTAL_STEPS))
+    local completed=$((percentage * bar_width / 100))
+    local remaining=$((bar_width - completed))
+    printf "${C}[%-${bar_width}s] %3d%%${NC}\n" "$(printf '#%.0s' $(seq 1 $completed))" "$percentage"
+    printf "\n\n"
+}
+
+# Function: Update the progress bar and step description
+update_progress() {
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    if [ "$CURRENT_STEP" -gt "$TOTAL_STEPS" ]; then
+        CURRENT_STEP=$TOTAL_STEPS
+    fi
+    display_progress_unit
+    sleep 2
+}
+
+# Updated logic with progress bars for all commands
+start() {
+	CURRENT_STEP=0
+	TOTAL_STEPS=6
+	# Step 1
+	STEP_DESCRIPTION="Starting eti Sync Server"
+	display_progress_unit
+	. /root/eti-config.conf
+	alias eti='/etc/init.d/eti'
+	service resilio-sync start
+	update_progress
+	sleep 2
+	echo "\n"
+	# Step 2
+	STEP_DESCRIPTION="Updating Sync configuration"
+	display_progress_unit
+	curl -u $user:$pass "$eti_call&dir=$sync_dir/eti_launcher&$syncoptions"
+	curl -u $user:$pass "$eti_server_call&dir=$sync_dir/eti_sync_server&$syncoptions"
+	sleep 2
+	update_progress
+	# Step 3
+	STEP_DESCRIPTION="Fetching game database"
+	display_progress_unit
+	sqlite3 /root/game.db \ 'select game_key,game_title,game_id from games order by db_id' > /root/game.db.txt
+	sqlite3 /root/game.db \ 'select tool_key,tool_name,tool_id from tools order by db_id' >> /root/game.db.txt
+	sleep 2
+	update_progress
+	# Step 4
+	STEP_DESCRIPTION="Updating game shares"
+	display_progress_unit
+	update_progress
+	while IFS='|' read -r col1 col2 col3; do echo "Updating "$col1" ("$col2") ..." | tr -ds '[:]' ''; curl -u $user:$pass "$sync_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; curl --silent --output /dev/null -u $user:$pass "$prefs_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"; sleep 1; echo "\n"; done < /root/game.db.txt
+	update_progress
+	rm /root/game.db.txt
+	cp /lan/eti_launcher/update/game.db /root/game.db
+	# Step 5
+	STEP_DESCRIPTION="Updating Sync Server files"
+	display_progress_unit
+	if [ -f $sync_dir/eti_sync_server/sync_server.service ]
+	then
+	  echo "Updating Sync Server Service..."
+	  cp $sync_dir/eti_sync_server/sync_server.service /etc/init.d/eti
+ 	  echo "Updating Sync Server Info..."
+	  cp $sync_dir/eti_sync_server/sync_server.info /etc/rc.local
+ 	fi
+	echo 'done.' >&2
+	update_progress
+	# Step 6
+	STEP_DESCRIPTION="Sync Server started."
+	display_progress_unit
+	update_progress
+}
+
+stop() {
+    CURRENT_STEP=0
+    TOTAL_STEPS=2
+    STEP_DESCRIPTION="Stopping eti Sync Server"
+    display_progress_unit
+    . /root/eti-config.conf
+    curl --silent --output /dev/null -u $user:$pass "$exit_call"
+    sleep 2
+    service resilio-sync stop
+    update_progress
+    STEP_DESCRIPTION="eti Sync Server stopped"
+    update_progress
+}
+
+cleanup() {
+    CURRENT_STEP=0
+    TOTAL_STEPS=2
+    STEP_DESCRIPTION="Confirming cleanup"
+    display_progress_unit
+    echo -n "Should all synchronized data be removed? [yes|no] "
+    local SURE
+    read SURE
+    update_progress
+    if [ "$SURE" = "yes" ]; then
+        stop
+        rm -rf /lan/*
+    fi
+    STEP_DESCRIPTION="Cleanup complete"
+    update_progress
+}
+
+update_keys() {
+    CURRENT_STEP=0
+    TOTAL_STEPS=7
+    STEP_DESCRIPTION="Updating keys"
+    display_progress_unit
+    . /root/eti-config.conf
+    cp /lan/eti_launcher/update/game.db /root/game.db
+    rm /root/game.db.txt
+    rm /root/game.db.del.txt
+    update_progress
+    STEP_DESCRIPTION="Extracting keys"
+    display_progress_unit
+    sqlite3 /root/game.db 'select game_key,game_title,game_id from games order by db_id' > /root/game.db.txt
+    sqlite3 /root/game.db 'select game_key,game_id from discarded order by del_id' > /root/game.db.del.txt
+    update_progress
+    STEP_DESCRIPTION="Applying updates"
+    display_progress_unit
+    while IFS='|' read -r col1 col2 col3; do
+        echo "Updating $col1 ($col2)..."
+        curl -u $user:$pass "$sync_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"
+        curl --silent --output /dev/null -u $user:$pass "$prefs_call&dir=$sync_dir/$col3&secret=$col1&$syncoptions"
+        sleep 1
+        echo "\n"
+    done < /root/game.db.txt
+    update_progress
+    STEP_DESCRIPTION="Key update complete"
+    update_progress
+	STEP_DESCRIPTION="Removing discarded keys from sync"
+    display_progress_unit
+    while IFS='|' read -r col1 col2; do
+        echo "Removing discarded key $col1 for ID $col2..."
+        curl -u $user:$pass "$sync_remove_call&secret=$col1"
+        curl --silent --output /dev/null -u $user:$pass "$remove_call&secret=$col1"
+        sleep 1
+        echo "\n"
+    done < /root/game.db.del.txt
+    update_progress
+}
+
+
+lan_mode() {
+	iptables -t nat -F
+	iptables -t mangle -F
+	iptables -F
+	iptables -X
+	ip6tables -t nat -F
+	ip6tables -t mangle -F
+	ip6tables -F
+	ip6tables -X
+	# Allow Localhost
+	iptables -A INPUT -i lo -j ACCEPT
+	iptables -A OUTPUT -o lo -j ACCEPT
+	ip6tables -A INPUT -i lo -j ACCEPT
+	ip6tables -A OUTPUT -o lo -j ACCEPT
+	# Allow DHCP
+	iptables -A OUTPUT -d 255.255.255.255 -j ACCEPT
+	iptables -A INPUT -s 255.255.255.255 -j ACCEPT
+	# Allow private networks
+	iptables -A INPUT -s 192.168.0.0/16 -d 192.168.0.0/16 -j ACCEPT
+	iptables -A OUTPUT -s 192.168.0.0/16 -d 192.168.0.0/16 -j ACCEPT
+	iptables -A INPUT -s 10.0.0.0/8 -d 10.0.0.0/8 -j ACCEPT
+	iptables -A OUTPUT -s 10.0.0.0/8 -d 10.0.0.0/8 -j ACCEPT
+	iptables -A INPUT -s 172.16.0.0/12 -d 172.16.0.0/12 -j ACCEPT
+	iptables -A OUTPUT -s 172.16.0.0/12 -d 172.16.0.0/12 -j ACCEPT
+	iptables -A INPUT -s 169.254.0.0/16 -d 169.254.0.0/16 -j ACCEPT
+	iptables -A OUTPUT -s 169.254.0.0/16 -d 169.254.0.0/16 -j ACCEPT
+	# Sync multicast/broadcast
+	iptables -A INPUT -s 239.192.0.0 -j ACCEPT
+    iptables -A OUTPUT -d 239.192.0.0 -j ACCEPT
+	iptables -A INPUT -s 192.168.1.255 -j ACCEPT
+	iptables -A OUTPUT -d 192.168.1.255 -j ACCEPT
+	iptables -A INPUT -m pkttype --pkt-type multicast -j ACCEPT
+	iptables -A INPUT -m pkttype --pkt-type broadcast -j ACCEPT
+    iptables -A OUTPUT -m pkttype --pkt-type multicast -j ACCEPT
+    iptables -A OUTPUT -m pkttype --pkt-type broadcast -j ACCEPT
+	# Allow incoming ping
+	iptables -A INPUT -p icmp --icmp-type echo-request -j ACCEPT
+	# Allow established sessions to receive traffic
+	iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+	# Allow VPN
+	iptables -A INPUT -i tun+ -j ACCEPT
+	iptables -A FORWARD -i tun+ -j ACCEPT
+	iptables -A OUTPUT -o tun+ -j ACCEPT
+    # Block All
+    iptables -A OUTPUT -j DROP
+    iptables -A INPUT -j DROP
+    iptables -A FORWARD -j DROP
+    ip6tables -A OUTPUT -j DROP
+    ip6tables -A INPUT -j DROP
+    ip6tables -A FORWARD -j DROP
+
+    . /root/eti-config.conf	
+
+	iptables-save > /etc/iptables/rules.v4
+	ip6tables-save > /etc/iptables/rules.v6
+	echo "LAN mode activated"
+}
+
+inet_mode() {
+	iptables -P INPUT ACCEPT
+	iptables -P FORWARD ACCEPT
+	iptables -P OUTPUT ACCEPT
+	iptables -t nat -F
+	iptables -t mangle -F
+	iptables -F
+	iptables -X
+	ip6tables -P INPUT ACCEPT
+	ip6tables -P FORWARD ACCEPT
+	ip6tables -P OUTPUT ACCEPT
+	ip6tables -t nat -F
+	ip6tables -t mangle -F
+	ip6tables -F
+	ip6tables -X
+
+	iptables-save > /etc/iptables/rules.v4
+	ip6tables-save > /etc/iptables/rules.v6
+    echo "LAN mode disabled"
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  cleanup)
+    cleanup
+    ;;
+  update_keys)
+    update_keys
+    ;;
+  lan_mode)
+    lan_mode
+    ;;
+  inet_mode)
+    inet_mode
+    ;;
+  restart)
+    stop
+    start
+    ;;
+  *)
+    echo "Usage: eti {start|stop|restart|cleanup|update_keys|lan_mode|inet_mode}"
+    ;;
+esac

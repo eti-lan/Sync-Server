@@ -1,0 +1,58 @@
+#!/bin/sh
+
+# ANSI color codes
+C="\033[38;5;214m"     # Orange
+NC="\033[0m"           # Reset colors and formatting
+
+# Variables for system information
+. /root/eti-config.conf
+root_usage=`df -h $sync_dir | awk '/\// {print $(NF-1)}'`
+memory_usage=`free -m | awk '/Mem/ { printf("%3.1f%%", $3/$2*100) }'`
+ip_address=`ip -4 addr | grep -E 'eth|ens' | grep -oP '(?<=inet\s)\d+(\.\d+){3}'`
+ip_address=`hostname -I`
+
+# Update /etc/issue with custom message
+printf "\n" > /etc/issue
+echo "${C}                            tttt            iiii    " >> /etc/issue
+echo "${C}                          ttt:::t           i::::i  " >> /etc/issue
+echo "${C}                          t:::::t            iiii   " >> /etc/issue
+echo "${C}                          t:::::t                   " >> /etc/issue
+echo "${C}    eeeeeeeeeeee    ttttttt:::::ttttttt    iiiiiii  " >> /etc/issue
+echo "${C}  ee::::::::::::ee  t:::::::::::::::::t    i:::::i  " >> /etc/issue
+echo "${C} e::::::eeeee:::::eet:::::::::::::::::t     i::::i  " >> /etc/issue
+echo "${C}e::::::e     e:::::etttttt:::::::tttttt     i::::i  " >> /etc/issue
+echo "${C}e:::::::eeeee::::::e      t:::::t           i::::i  " >> /etc/issue
+echo "${C}e:::::::::::::::::e       t:::::t           i::::i  " >> /etc/issue
+echo "${C}e::::::eeeeeeeeeee        t:::::t           i::::i  " >> /etc/issue
+echo "${C}e:::::::e                 t:::::t    tttttt i::::i  " >> /etc/issue
+echo "${C}e::::::::e                t::::::tttt:::::ti::::::i " >> /etc/issue
+echo "${C} e::::::::eeeeeeee        tt::::::::::::::ti::::::i " >> /etc/issue
+echo "${C}  ee:::::::::::::e          tt:::::::::::tti::::::i " >> /etc/issue
+echo "${C}    eeeeeeeeeeeeee            ttttttttttt  iiiiiiii " >> /etc/issue
+
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+echo "${C}    Sync Server                        (v.20241222)${NC}" >> /etc/issue
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+echo "${C}    Sync Server IP address:            ${NC}$ip_address" >> /etc/issue
+echo "${C}    SSH access:                        ${NC}$ip_address:22" >> /etc/issue
+echo "${C}    Sync management interface:         ${NC}http://$ip_address:8888" >> /etc/issue
+printf "\n" >> /etc/issue
+echo "${C}    Used storage capacity:             ${NC}$root_usage" >> /etc/issue
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+echo "${C}    Server Control:                    ${NC}eti or /etc/init.d/eti" >> /etc/issue
+echo "${C}    Start/Stop service:                ${NC}eti start/stop" >> /etc/issue
+printf "\n" >> /etc/issue
+echo "${C}    Check for new games:               ${NC}eti update_keys" >> /etc/issue
+echo "${C}    Activate LAN only mode:            ${NC}eti lan_mode" >> /etc/issue
+echo "${C}    Activate Internet mode:            ${NC}eti inet_mode" >> /etc/issue
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+printf "\n" >> /etc/issue
+
+# Copy /etc/issue to /etc/motd
+cp /etc/issue /etc/motd
+
